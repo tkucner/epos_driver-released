@@ -1,0 +1,413 @@
+#include "epos_driver/epos_driver.hpp"
+/*! In the constructor we set all the initial parmaeters and we also
+ *  start the node itself however we do not start the communication
+ *  with the servomotor. 
+ * 
+ * @param[in] param thorugh this NodeHandle there are passed
+ * argumnets to the node.
+ *
+ * @see On  
+ */
+eposDriver::eposDriver(ros::NodeHandle param){
+  param.param<std::string>("port",port,"/dev/usb0");
+  param.param<bool>("use_radps",use_radps,true);  
+  param.param<double>("max_velocity_radps",p_max_velocity_radps,0.4);
+  param.param<double>("accel_radpss",p_accel_radpss,0.02);
+  param.param<double>("deccel_radpss",p_deccel_radpss,0.02);
+  param.param<int>("max_velocity_rpm",p_max_velocity_rpm,57);
+  param.param<int>("accel_rpmps",p_accel_rpmps,2);
+  param.param<int>("deccel_rpmps",p_deccel_rpmps,2);
+  param.param<bool>("use_trapezoidal",use_trapezoidal,false);
+  param.param<int>("topic_frequency",topic_frequency,10);
+  param.param<std::string>("my_frame_id", my_frame_id, "maxon");
+  param.param<std::string>("parent_frame_id", parent_frame_id, "base");
+  param.param<double>("sensor_pose_x", sensor_pose_x, 0.0);
+  param.param<double>("sensor_pose_y", sensor_pose_y, 0.0);
+  param.param<double>("sensor_pose_z", sensor_pose_z, 0.0);
+
+  if(use_radps){
+    ROS_INFO("velocity radps %f",p_max_velocity_radps);
+    max_velocity=Radps2rpm(p_max_velocity_radps);
+    ROS_INFO("velocity rpm %d",max_velocity);
+    accel=Radps2rpm(p_accel_radpss);
+    deccel=Radps2rpm(p_accel_radpss);
+    ROS_INFO("accel %f -> %d",p_accel_radpss,accel);
+    ROS_INFO("deccel %f -> %d",p_deccel_radpss,deccel);
+  }
+  else{
+    max_velocity=p_max_velocity_rpm;
+    accel=p_accel_rpmps;
+    deccel=p_accel_rpmps;
+  }
+}
+
+/*! In this function take place all the necessarry setup of the
+ *  driver. It opens and configure serial port. 
+ * 
+ * This function is based on MainSetup from ALL4-e-Ham.
+ *
+ * @return If setup was correct returns 0 otherwise 1.
+ *
+ * @todo Is this return enough or should we return speciffic error code?
+ */
+
+int eposDriver::On(){
+  WORD epos_status=0x0;
+  int epos_state=0;
+  char device_name[128];
+  int function_returns;
+  unsigned long win;///< position window
+  long pos = -99;///< position of the EPOS
+  ROS_INFO("*** EPOS driver initialising ***");
+  ROS_INFO("Openning the device. Port: %s",port.c_str());
+  if(openEPOS(const_cast<char *>(port.c_str()))<0){
+    ROS_ERROR("Could not open EPOS on port: %s.",port.c_str());
+    ROS_ERROR("EXITING NODE");
+//    return(-1);
+    ros::shutdown();
+  }
+  else{
+    ROS_INFO("EPOS on port %s opened.",port.c_str());
+  }
+  ///@todo Do we need to read the device name?
+  if(readDeviceName(device_name)<0){ //reading the name of the connected device
+    ROS_ERROR("Could not read the device name");
+  }
+  else{
+    ROS_INFO("Connected device name is: %s",device_name);
+  }
+  ///@todo Do we need to read the software version?
+  function_returns=readSWversion();
+  if(function_returns<0){
+    ROS_ERROR("Could not read the software version");
+  }
+  else{
+    ROS_INFO("Software version is is: %x",function_returns);
+  }
+  ///@todo Do we need to read the RS232 timeout?
+  function_returns=readRS232timeout();
+  if(function_returns<0){
+    ROS_ERROR("Could not read the RS232 timeout");
+    EposError();
+  }
+  else{
+    ROS_INFO("RS232 timeout is: %d ms\n", function_returns);
+  }
+
+  ROS_INFO("*** Checking EPOS status ***");
+  function_returns = readStatusword(&epos_status);
+  if (function_returns<0){
+    ROS_ERROR("Could not check EPOS status");
+    EposError();
+  }
+  else{
+  ROS_INFO("EPOS status is: %#06x \n",epos_status);
+  }
+  
+  ROS_INFO("*** Switching on EPOS ***");
+  epos_state=checkEPOSstate();
+  ROS_INFO("EPOS state; %d:",epos_state);
+
+  if (epos_state==11){
+    ROS_INFO("EPOS is in FAULT state, doing FAULT RESET.");
+    changeEPOSstate(6);///< reset FAULT
+    epos_state=checkEPOSstate();///< check status again
+    if(epos_state==11){
+      ROS_ERROR("EPOS still in FAULT state, quit!");
+      EposError();
+      return -1;//exit(1);
+    }
+    else{
+      ROS_INFO("Success! (Now in state %d)", epos_state);
+    }
+  }
+  
+  if(epos_state!=4 && epos_state!=7) { ///< EPOS not running, issue a quick stop
+    ROS_INFO("EPOS is in FAULT state, doing FAULT RESET.");
+    changeEPOSstate(3);
+    epos_state=checkEPOSstate();///< EPOS should now be in 'switch on disabled' (2)
+    if (epos_state!=2){
+      ROS_ERROR("EPOS is NOT in 'switch on disabled' state, quit!");
+      return -1; //exit(1);
+    }
+    else {  ///< EPOS is in 'switch on disabled'
+      ROS_INFO("EPOS is in 'switch on disabled' state, doing shutdown.");
+      changeEPOSstate(0); ///< issue a 'shutdown'
+    }
+    ROS_INFO("Switching on EPOS");
+    changeEPOSstate(1);
+    ROS_INFO("Enable operation" );
+    changeEPOSstate(5);
+  }
+
+  EposState();
+  readPositionWindow(&win);
+  ROS_INFO("EPOS position window is %lu.", win);  
+  readActualPosition(&pos);   ///< actual position
+  ROS_INFO("Please wait until homing complete...");
+  if (setHomePolarity(1)) {///< filter wheel home switch is low-active; THIS IS NOT THE DEFAULT! what does it mean????
+    ROS_ERROR(" *** UNABLE TO SET HomeSwitch TO low-active!!! ***");
+  }
+
+  while ((function_returns= doHoming(18,0))!=0){
+    ROS_ERROR("#### doHoming() returned %d ####", function_returns);
+    changeEPOSstate(5);
+  }
+
+  if(setOpMode(1)){ ///< Set Profile Position Mode once, to avoid having to dot at each call to moveAbsolute().
+    ROS_ERROR("Error with setOpMode(1)");
+    return(-1);
+  }
+  EposState();
+
+  readActualPosition(&pos);
+  ROS_INFO("EPOS position is %ld.", pos);
+  motor_state=1;
+  module_count=1;
+  ROS_INFO("Prameters %d %d %d", max_velocity,accel,deccel);
+  set_speed_profile(max_velocity,accel,deccel,use_trapezoidal);
+
+  ROS_INFO("EPOS driver is reday");
+
+  return(0);
+}
+
+/*! This function closes communication with the epos servomotor. */
+int eposDriver::Off(){
+ ROS_INFO("Shutting EPOS driver down");
+ if(closeEPOS()<0){
+   ROS_ERROR("Failure druing shooting down");
+   return -1;
+ }
+ else{
+  ROS_INFO("EPOS driver has been shutdown");
+ }
+  return 0;
+}
+
+/*! This function handles all the functionalities of the node. All the
+ *  topics are published and all services are advertised inside of
+ *  this  function. 
+ *  @todo Check if all converions are corret.
+ */
+int eposDriver::Main(){
+  long raw_pos;
+  double pos;
+  long raw_speed;
+  double speed;
+  double acceleration;
+  short current;
+  long old_speed;
+  float delta_speed;
+  bool valid_delta_speed(false);
+  move_single=true;
+  epos_driver::EPOSState msg;
+  ros::Time then;
+  ros::Time now;
+  ros::Duration elapsed_time;
+  static const double mradPerTick=0.000209;//1000.0*0.000209;
+  ros::Rate loop_rate(topic_frequency);
+  state_publisher=nh.advertise<epos_driver::EPOSState>("EPOSState",1000);
+  ros::ServiceServer MoveToService=nh.advertiseService("MoveTo",&eposDriver::MoveTo,this);
+  ros::ServiceServer MoveCycleService=nh.advertiseService("MoveCycle",&eposDriver::MoveCycle,this);
+  tf::Transform transform;
+  static tf::TransformBroadcaster tf_publisher;
+
+  while(ros::ok()){
+    old_speed=speed;
+    then=now;
+    now=ros::Time::now();
+    readActualVelocity(&raw_speed);
+    readActualPosition(&raw_pos);
+    readActualCurrent(&current);
+    pos=mradPerTick*static_cast<double>(raw_pos);
+    speed=mradPerTick*static_cast<double>(raw_speed);
+
+    if(valid_delta_speed){
+      delta_speed=speed-old_speed;
+      elapsed_time=now-then;
+      acceleration=delta_speed/elapsed_time.toSec(); 
+    }
+    else{
+      acceleration=0;
+    }
+
+    if(!valid_delta_speed)
+      valid_delta_speed=true;
+
+    msg.raw_position=raw_pos;
+    msg.position=pos;
+    msg.raw_speed=raw_speed;
+    msg.speed=speed;
+    msg.acceleration=acceleration;
+    msg.current=current;
+    if(move_single)
+      ROS_INFO("pos %d %f",raw_pos,pos);
+    if(!move_single){
+      ROS_INFO("pos %d %f",raw_pos,pos);
+      // if(raw_speed==0){
+        // if(move_down&&pos==high_limit/mradPerTick){
+        //   moveAbsolute(low_limit/mradPerTick);
+        //   move_up=true;
+        //   move_down=false;
+        // }else if(move_up&&pos==low_limit/mradPerTick){
+        //   moveAbsolute(high_limit/mradPerTick);
+        //   move_up=false;
+        //   move_down=true;
+        // }
+      // }
+      if(move_down){
+        if(raw_pos>=int(high_limit/mradPerTick)-10){//UGLY HACK!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+          moveAbsolute(low_limit/mradPerTick);
+          move_up=true;
+          move_down=false;
+        }
+      }
+      if(move_up){
+        if(raw_pos<=int(low_limit/mradPerTick)+10){//UGLY HACK!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+          moveAbsolute(high_limit/mradPerTick);
+          move_up=false;
+          move_down=true;
+        }
+      }
+    }
+    
+    transform.setOrigin(tf::Vector3(sensor_pose_x,sensor_pose_y,sensor_pose_z)); 
+    transform.setRotation(tf::createQuaternionFromRPY(0.0,0.0,pos));
+    tf_publisher.sendTransform(tf::StampedTransform(transform,ros::Time::now(), parent_frame_id, my_frame_id));   
+    
+    state_publisher.publish(msg);
+    ros::spinOnce();
+    loop_rate.sleep(); 
+  }
+  return 0;
+}
+
+/*! This function is used to convert the units of rotation speed. It
+ *  is based on code from ALL-4-eHAM
+ *
+ * @param[in] radps input in radians
+ * @return value in rpm
+ *
+ * @todo Ask Marin what is doing which variable
+ */
+unsigned int eposDriver::Radps2rpm(double radps){
+  static const double mradPerTick=1000.0*0.000209;
+  static const double radps_to_rpm = 3.0*10.0*100.0*1000.0/mradPerTick/1000.0;
+  ROS_INFO("value %f -> %d",radps*radps_to_rpm,int(radps*radps_to_rpm));
+  return int(radps*radps_to_rpm);
+}
+
+/*! This function displays error of epos driver in more ROS friendly
+ *  way. It is just a rewritten function checkEPOSerror().
+ *
+ * @see checkEPOSerror
+ */
+int eposDriver::EposError(){
+  switch(E_error) {
+  case E_NOERR: 
+    return(0);
+  case E_ONOTEX:
+    ROS_ERROR("EPOS responds with error: requested object does not exist!"); break;
+  case E_SUBINEX:
+    ROS_ERROR("EPOS responds with error: requested subindex does not exist!"); break;
+  case E_OUTMEM:
+    ROS_ERROR("EPOS responds with error: out of memory!"); break;
+  case E_NOACCES:
+    ROS_ERROR("EPOS responds with error: unsupported access to an object!"); break;
+  case E_WRITEONLY:
+    ROS_ERROR("EPOS responds with error: attempt to read a write-only object!"); break;
+  case E_READONLY:
+    ROS_ERROR("EPOS responds with error: attempt to write a read-only object!"); break;
+  case E_PARAMINCOMP:
+    ROS_ERROR("EPOS responds with error: general parameter incompatibility!"); break;
+  case E_INTINCOMP:
+    ROS_ERROR("EPOS responds with error: general internal incompatibility in the device!"); break;
+  case E_HWERR:
+    ROS_ERROR("EPOS responds with error: access failed due to an HARDWARE ERROR!"); break;
+  case E_PRAGNEX:
+    ROS_ERROR("EPOS responds with error: value range of parameter exeeded!"); break;
+  case E_PARHIGH:
+    ROS_ERROR("EPOS responds with error: value of parameter written is too high!"); break;
+  case E_PARLOW:
+    ROS_ERROR("EPOS responds with error: value of parameter written is too low!"); break;
+  case E_PARREL:
+    ROS_ERROR("EPOS responds with error: maximum value is less than minimum value!"); break;
+  case E_NMTSTATE:
+    ROS_ERROR("EPOS responds with error: wrong NMT state!"); break;
+  case E_RS232:
+    ROS_ERROR("EPOS responds with error: rs232 command illegeal!"); break;
+  case E_PASSWD:
+    ROS_ERROR("EPOS responds with error: password incorrect!"); break;
+  case E_NSERV:
+    ROS_ERROR("EPOS responds with error: device not in service mode!"); break;
+  case E_NODEID:
+    ROS_ERROR("EPOS responds with error: error in Node-ID!"); break;
+  default:
+    ROS_ERROR("EPOS responds with error: unknown EPOS error code: %#lx",E_error); break;
+  }
+  return(-1);
+}
+
+/*! This function displays state of epos driver in more ROS friendly
+ *  way. It is just a rewritten function printEPOSstate().
+ *
+ * @see printEPOSstate
+ */
+int eposDriver::EposState(){
+  switch(checkEPOSstate()){
+    case 0: ROS_INFO("EPOS is in state: start"); break;
+    case 1: ROS_INFO("EPOS is in state: Not ready to switch on."); break;
+    case 2: ROS_INFO("EPOS is in state: Switch on disabled."); break;
+    case 3: ROS_INFO("EPOS is in state: Ready to switch on."); break;
+    case 4: ROS_INFO("EPOS is in state: Switched on."); break;
+    case 5: ROS_INFO("EPOS is in state: Refresh."); break;
+    case 6: ROS_INFO("EPOS is in state: Measure init."); break;
+    case 7: ROS_INFO("EPOS is in state: Operation enable."); break;
+    case 8: ROS_INFO("EPOS is in state: Quick stop active"); break;
+    case 9: ROS_INFO("EPOS is in state: Fault reaction active (disabled)"); break;
+    case 10: ROS_INFO("EPOS is in state: Fault reaction active (enabled)"); break;
+    case 11: ROS_INFO("EPOS is in state: FAULT\n"); break;
+    default: 
+      ROS_INFO("EPOS is in state: UNKNOWN!\n");
+      return(-1);
+  }
+  return(0);
+}
+
+/*! This is a handler for for the servie MoveTo. It accepts the input
+ *  in radians. This service moves the sensor only once to given
+ *  position. 
+*/
+bool eposDriver::MoveTo(epos_driver::MoveTo::Request  &req,epos_driver::MoveTo::Response  &res){
+  static const float radPerTick = 0.000209;
+  moveAbsolute(req.pose/radPerTick);
+  move_single=true;
+  return true;
+}
+/*! This is a handler for for the servie MoveTo. It accepts the input
+ *  in radians. This service moves the sensor only once to given
+ *  position. 
+*/
+bool eposDriver::MoveCycle(epos_driver::MoveCycle::Request  &req,epos_driver::MoveCycle::Response &res){
+  static const float radPerTick = 0.000209;
+  long raw_speed;
+  high_limit=req.pose_top;
+  low_limit=req.pose_bottom;
+  moveAbsolute(high_limit/radPerTick);
+  if(high_limit>low_limit){
+    do{
+      readActualVelocity(&raw_speed);
+      ros::Duration(0.1).sleep();
+      ROS_INFO("raw speed %d", raw_speed);
+    }while(raw_speed!=0);
+    move_single=false;
+    move_up=false;
+    move_down=true;
+  }
+  else {
+    ROS_ERROR("Limits of motion wrongly setted!");
+  }
+  return true;
+}
+

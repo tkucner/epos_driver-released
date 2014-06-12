@@ -1,0 +1,9 @@
+<launch>
+  <node pkg="epos_driver" type="epos_driver_node" name="wrist" output="screen" required="true">
+    <param name="port" value="/dev/ttyUSB1" />
+    <param name="accel_radpss" value="0.02" />
+    <param name="max_velocity_radps" value="0.7" />
+    <param name="topic_frequency" value="1000" />
+    <param name="use_trapezoidal" value="true" />
+  </node>
+</launch>
