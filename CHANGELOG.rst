@@ -2,6 +2,10 @@
 Changelog for package epos_driver
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+0.0.3 (2014-06-13)
+------------------
+* package.xml file fix
+
 0.0.2 (2014-06-12)
 ------------------
 * example launch-file added
