@@ -58,9 +58,9 @@ eposdriver::eposdriver(ros::NodeHandle parameters){
  * This function is based on MainSetup from ALL4-e-Ham.
  *
  * @return If setup was correct returns 0 otherwise 1.
- *
- * @todo Is this return enough or should we return speciffic error code?
  */
+// todo Is this return enough or should we return speciffic error code?
+
 
 int eposdriver::On(){
   WORD eposStatus=0x0;
@@ -79,14 +79,14 @@ int eposdriver::On(){
   else{
     ROS_INFO("EPOS on port %s opened.",port.c_str());
   }
-  ///@todo Do we need to read the device name?
+  //todo Do we need to read the device name?
   if(readDeviceName(deviceName)<0){ //reading the name of the connected device
     ROS_ERROR("Could not read the device name");
   }
   else{
     ROS_INFO("Connected device name is: %s",deviceName);
   }
-  ///@todo Do we need to read the software version?
+  //todo Do we need to read the software version?
   functionReturns=readSWversion();
   if(functionReturns<0){
     ROS_ERROR("Could not read the software version");
@@ -94,7 +94,7 @@ int eposdriver::On(){
   else{
     ROS_INFO("Software version is is: %x",functionReturns);
   }
-  ///@todo Do we need to read the RS232 timeout?
+  //todo Do we need to read the RS232 timeout?
   functionReturns=readRS232timeout();
   if(functionReturns<0){
     ROS_ERROR("Could not read the RS232 timeout");
@@ -199,8 +199,9 @@ int eposdriver::Off(){
 /*! This function handles all the functionalities of the node. All the
  *  topics are published and all services are advertised inside of
  *  this  function. 
- *  @todo Check if all converions are corret.
  */
+ // todo Check if all converions are corret.
+ 
 int eposdriver::Main(){
   long rawPosition;
   double pos;
@@ -320,9 +321,9 @@ int eposdriver::Main(){
  *
  * @param[in] radps input in radians
  * @return value in rpm
- *
- * @todo Ask Marin what is doing which variable
  */
+ //todo check what is doing which variable
+ 
 unsigned int eposdriver::Radps2rpm(double radps){
   static const double mradPerTick=1000.0*0.000209;
   static const double radpsToRpm = 3.0*10.0*100.0*1000.0/mradPerTick/1000.0;
