@@ -41,7 +41,7 @@ class eposdriver{
 public:
   /*! @brief Configuration of the node */
   eposdriver(ros::NodeHandle parameters); 
-  /*! @todo do we need explicite destructor?*/
+  /* todo do we need explicite destructor?*/
   ~eposdriver(){};
   /*! @brief setup the servomotor*/
   int On();
@@ -50,7 +50,7 @@ public:
   /*! @brief The main loop handling all the functionalities of the driver */
   int Main();
 private:
-  /// @todo add radPerTick constat
+  // todo add radPerTick constat
   ros::NodeHandle nodeHandler; ///< node handler
   ros::Publisher statePublisher;///< state publisher of EPOS servomotor 
   std::string port; ///< path to the epos device 
@@ -66,8 +66,10 @@ private:
   unsigned int maxVelocity; ///< maximum velocity of the motor [rpm]
   unsigned int accel; ///< acceleration of the motor [rpm/s] 
   unsigned int deccel; ///< deceleration of the motor [rpm/s] 
-  int motorState; ///< Motor on=1 off=0 @todo where is it used & why we need this?
-  unsigned int moduleCount; ///< number of controlled modules @todo where is it used & why we need this?
+  int motorState; ///< Motor on=1 off=0 
+  //todo where is it used & why we need this?
+  unsigned int moduleCount; ///< number of controlled modules 
+  //todo where is it used & why we need this?
   double topicFrequency; ///< frequency at which the topic with state is published
   double highLimit; ///< the top limit of the cyclic motion of sensor
   double lowLimit; ///< the bottom limit of the cyclic motion of sensor
