@@ -1661,7 +1661,7 @@ int moveAbsolute(long int steps){
   if (false)
   {
     // check, if we are in Profile Position Mode
-    ///\todo Do we really have to check the mode in each call to moveAbsolute?
+    //todo Do we really have to check the mode in each call to moveAbsolute?
     if (readOpMode() != E_PROFPOS) {
       if( setOpMode(E_PROFPOS) ) {
         fprintf(stderr, "ERROR: problem at %s; %s line %d\n",
@@ -1719,7 +1719,7 @@ int moveVelocity(int32_t steps){
 
 
   // check if we are in Profile Velocity Mode
-  ///\todo Do we really have to check the mode in each call?
+  //todo Do we really have to check the mode in each call?
   int current_mode;
   if (current_mode = readOpMode() != E_PROFVEL) {
     if( setOpMode(E_PROFVEL) ) {
